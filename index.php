@@ -12,6 +12,7 @@ if (!isset($_SESSION['user_id'])) {
     <meta charset="UTF-8">
     <title>Social App Chat</title>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
     <style>
         body { font-family: Arial, sans-serif; margin: 0; display: flex; height: 100vh; }
         .sidebar { width: 250px; background: #f1f1f1; padding: 10px; overflow-y: auto; }
@@ -34,6 +35,7 @@ if (!isset($_SESSION['user_id'])) {
     </style>
 </head>
 <body>
+    <audio id="notificationSound" src="assets/sound/notification1.mp3"></audio>
     <div class="sidebar">
         <h3>Users</h3>
         <ul id="user-list"></ul>
@@ -75,12 +77,14 @@ if (!isset($_SESSION['user_id'])) {
             var data = JSON.parse(e.data);
             if (data.message_id && data.message_id <= lastMessageId) return;
             if (data.sender_id == selectedRecipientId || (data.sender_id == senderId && data.recipient_id == selectedRecipientId)) {
+                
                 console.log("WebSocket message received for recipient:", selectedRecipientId, data);
                 displayMessage(data);
                 lastMessageId = data.message_id || lastMessageId;
             }
             if (data.sender_id != senderId && data.recipient_id == senderId && !data.is_read) {
                 updateUnreadCount(data.sender_id, 1);
+                document.getElementById('notificationSound').play();
             }
         };
 
@@ -152,7 +156,7 @@ if (!isset($_SESSION['user_id'])) {
             }, 'json');
         }
 
-        function displayMessage(data) {
+/*         function displayMessage(data) {
             var isSent = data.sender_id == senderId;
             var senderName = userMap[data.sender_id] || 'User ' + data.sender_id;
             var messageClass = isSent ? 'sent' : 'received';
@@ -161,7 +165,18 @@ if (!isset($_SESSION['user_id'])) {
             }
             $('#notifications').append('<div class="message ' + messageClass + '"><strong>' + senderName + ':</strong> ' + data.message + ' <em>(' + data.created_at + ')</em></div>');
             $('#notifications').scrollTop($('#notifications')[0].scrollHeight);
-        }
+        } */
+       function displayMessage(data) {
+    var isSent = data.sender_id == senderId;
+    var senderName = userMap[data.sender_id] || 'User ' + data.sender_id;
+    var messageClass = isSent ? 'sent' : 'received';
+    if (!isSent && !data.is_read) {
+        messageClass += ' unread';
+    }
+    var timeAgo = moment(data.created_at).fromNow();
+    $('#notifications').append('<div class="message ' + messageClass + '"><strong>' + senderName + ':</strong> ' + data.message + ' <em>(' + timeAgo + ')</em></div>');
+    $('#notifications').scrollTop($('#notifications')[0].scrollHeight);
+}
 
         function loadMessages(recipientId) {
             $.getJSON('fetch_notifications.php', { user_id: senderId, recipient_id: recipientId }, function(notifications) {
@@ -197,6 +212,7 @@ if (!isset($_SESSION['user_id'])) {
                         lastMessageId = last_id;
                         if (notification.sender_id != senderId && notification.recipient_id == senderId && !notification.is_read) {
                             updateUnreadCount(notification.sender_id, 1);
+                            document.getElementById('notificationSound').play();
                         }
                     });
                     longPollMessages(last_id);
