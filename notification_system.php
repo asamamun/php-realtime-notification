@@ -1,24 +1,4 @@
 <?php
-// Database connection
-$servername = "localhost";
-$username = "root";
-$password = "";
-$dbname = "r64_php";
-
-$conn = new mysqli($servername, $username, $password, $dbname);
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
-}
-
-// Function to save notification
-function saveNotification($user_id, $message, $conn) {
-    $stmt = $conn->prepare("INSERT INTO notifications (user_id, message, created_at) VALUES (?, ?, NOW())");
-    $stmt->bind_param("is", $user_id, $message);
-    $stmt->execute();
-    $stmt->close();
-}
-
-// WebSocket server using Ratchet
 require __DIR__ . '/vendor/autoload.php';
 use Ratchet\MessageComponentInterface;
 use Ratchet\ConnectionInterface;
@@ -29,9 +9,11 @@ use Ratchet\WebSocket\WsServer;
 class NotificationServer implements MessageComponentInterface {
     protected $clients;
     protected $conn;
+    protected $userConnections;
 
     public function __construct($dbConnection) {
         $this->clients = new \SplObjectStorage;
+        $this->userConnections = [];
         $this->conn = $dbConnection;
     }
 
@@ -42,19 +24,44 @@ class NotificationServer implements MessageComponentInterface {
 
     public function onMessage(ConnectionInterface $from, $msg) {
         $data = json_decode($msg, true);
-        if (isset($data['user_id']) && isset($data['message'])) {
-            saveNotification($data['user_id'], $data['message'], $this->conn);
-            foreach ($this->clients as $client) {
-                $client->send(json_encode([
-                    'user_id' => $data['user_id'],
-                    'message' => $data['message'],
-                    'created_at' => date('Y-m-d H:i:s')
-                ]));
+        if (isset($data['action']) && $data['action'] === 'register') {
+            $this->userConnections[$data['user_id']] = $from;
+            echo "User {$data['user_id']} registered\n";
+            return;
+        }
+
+        if (isset($data['sender_id'], $data['recipient_id'], $data['message'])) {
+            $message_id = $this->saveNotification($data['sender_id'], $data['recipient_id'], $data['message']);
+            echo "Sending message from {$data['sender_id']} to {$data['recipient_id']}\n";
+            $messageData = [
+                'message_id' => $message_id,
+                'sender_id' => $data['sender_id'],
+                'recipient_id' => $data['recipient_id'],
+                'message' => $data['message'],
+                'created_at' => date('Y-m-d H:i:s'),
+                'is_read' => 0
+            ];
+            if (isset($this->userConnections[$data['recipient_id']])) {
+                $recipientConn = $this->userConnections[$data['recipient_id']];
+                $recipientConn->send(json_encode($messageData));
+                echo "Message sent to recipient {$data['recipient_id']}\n";
+            } else {
+                echo "Recipient {$data['recipient_id']} not connected\n";
+            }
+            if (isset($this->userConnections[$data['sender_id']])) {
+                $from->send(json_encode($messageData));
             }
         }
     }
 
     public function onClose(ConnectionInterface $conn) {
+        foreach ($this->userConnections as $user_id => $client) {
+            if ($client === $conn) {
+                unset($this->userConnections[$user_id]);
+                echo "User {$user_id} disconnected\n";
+                break;
+            }
+        }
         $this->clients->detach($conn);
         echo "Connection closed! ({$conn->resourceId})\n";
     }
@@ -63,9 +70,22 @@ class NotificationServer implements MessageComponentInterface {
         echo "An error occurred: {$e->getMessage()}\n";
         $conn->close();
     }
+
+    protected function saveNotification($sender_id, $recipient_id, $message) {
+        $stmt = $this->conn->prepare("INSERT INTO notifications (sender_id, recipient_id, message, created_at, is_read) VALUES (?, ?, ?, NOW(), 0)");
+        $stmt->bind_param("iis", $sender_id, $recipient_id, $message);
+        $stmt->execute();
+        $message_id = $this->conn->insert_id;
+        $stmt->close();
+        return $message_id;
+    }
 }
 
-// Start WebSocket server
+$conn = new mysqli("localhost", "root", "", "r64_notifications");
+if ($conn->connect_error) {
+    die("Connection failed: " . $conn->connect_error);
+}
+
 $server = IoServer::factory(
     new HttpServer(
         new WsServer(

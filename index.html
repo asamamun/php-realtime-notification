@@ -1,104 +1,126 @@
-<script type="text/javascript">
-        var gk_isXlsx = false;
-        var gk_xlsxFileLookup = {};
-        var gk_fileData = {};
-        function filledCell(cell) {
-          return cell !== '' && cell != null;
-        }
-        function loadFileData(filename) {
-        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
-            try {
-                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
-                var firstSheetName = workbook.SheetNames[0];
-                var worksheet = workbook.Sheets[firstSheetName];
-
-                // Convert sheet to JSON to filter blank rows
-                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
-                // Filter out blank rows (rows where all cells are empty, null, or undefined)
-                var filteredData = jsonData.filter(row => row.some(filledCell));
-
-                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
-                var headerRowIndex = filteredData.findIndex((row, index) =>
-                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
-                );
-                // Fallback
-                if (headerRowIndex === -1 || headerRowIndex > 25) {
-                  headerRowIndex = 0;
-                }
-
-                // Convert filtered JSON back to CSV
-                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
-                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
-                return csv;
-            } catch (e) {
-                console.error(e);
-                return "";
-            }
-        }
-        return gk_fileData[filename] || "";
-        }
-        </script><!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Social App Notifications</title>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Social App Chat</title>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <style>
-        #notifications { border: 1px solid #ccc; padding: 10px; max-height: 300px; overflow-y: auto; }
+      #notifications {
+        border: 1px solid #ccc;
+        padding: 10px;
+        max-height: 300px;
+        overflow-y: auto;
+      }
+      #user-list {
+        margin-bottom: 10px;
+      }
     </style>
-</head>
-<body>
-    <h2>Real-Time Notifications</h2>
-    <input type="text" id="user_id" placeholder="User ID">
-    <input type="text" id="message" placeholder="Message">
-    <button onclick="sendNotification()">Send Notification</button>
+  </head>
+  <body>
+    <h2>Real-Time Chat</h2>
+    <label for="sender_id">Your User ID:</label>
+    <input type="text" id="sender_id" placeholder="Your User ID" /><br />
+    <label for="recipient_id">Send to:</label>
+    <select id="recipient_id">
+      <option value="">Select a user</option></select
+    ><br />
+    <input type="text" id="message" placeholder="Message" />
+    <button onclick="sendMessage()">Send Message</button>
+    <div id="user-list"></div>
     <div id="notifications"></div>
 
     <script>
-        var conn = new WebSocket('ws://192.168.54.81:8080');
-        conn.onopen = function(e) {
-            console.log("Connected to WebSocket server");
-        };
+      var conn = new WebSocket("ws://192.168.54.81:8080");
+      var senderId = null;
 
-        conn.onmessage = function(e) {
-            var data = JSON.parse(e.data);
-            $('#notifications').prepend('<p><strong>User ' + data.user_id + ':</strong> ' + data.message + ' <em>(' + data.created_at + ')</em></p>');
-        };
+      conn.onopen = function (e) {
+        console.log("Connected to WebSocket server");
+      };
 
-        function sendNotification() {
-            var user_id = $('#user_id').val();
-            var message = $('#message').val();
-            if (user_id && message) {
-                conn.send(JSON.stringify({ user_id: user_id, message: message }));
-                $('#message').val('');
-            } else {
-                alert('Please enter both User ID and Message');
-            }
+      $("#sender_id").on("change", function () {
+        senderId = $(this).val();
+        if (senderId) {
+          conn.send(JSON.stringify({ action: "register", user_id: senderId }));
+          console.log("Registered user ID: " + senderId);
         }
+      });
 
-        // Fallback: Long polling if WebSocket is not supported
-        function longPollNotifications() {
-            $.ajax({
-                url: 'fetch_notifications.php',
-                method: 'GET',
-                success: function(data) {
-                    var notifications = JSON.parse(data);
-                    notifications.forEach(function(notification) {
-                        $('#notifications').prepend('<p><strong>User ' + notification.user_id + ':</strong> ' + notification.message + ' <em>(' + notification.created_at + ')</em></p>');
-                    });
-                    longPollNotifications(); // Recursive call
-                },
-                error: function() {
-                    setTimeout(longPollNotifications, 5000); // Retry after 5 seconds
-                }
+      conn.onmessage = function (e) {
+        var data = JSON.parse(e.data);
+        $("#notifications").prepend(
+          "<p><strong>User " +
+            data.sender_id +
+            ":</strong> " +
+            data.message +
+            " <em>(" +
+            data.created_at +
+            ")</em></p>"
+        );
+      };
+
+      // Fetch user list
+      $.getJSON("fetch_users.php", function (users) {
+        users.forEach(function (user) {
+          $("#recipient_id").append(
+            '<option value="' + user.id + '">' + user.username + "</option>"
+          );
+        });
+      });
+
+      function sendMessage() {
+        var sender_id = $("#sender_id").val();
+        var recipient_id = $("#recipient_id").val();
+        var message = $("#message").val();
+        if (sender_id && recipient_id && message) {
+          conn.send(
+            JSON.stringify({
+              sender_id: sender_id,
+              recipient_id: recipient_id,
+              message: message,
+            })
+          );
+          $("#message").val("");
+        } else {
+          alert(
+            "Please enter your User ID, select a recipient, and enter a message"
+          );
+        }
+      }
+
+      // Long polling fallback
+      function longPollMessages(last_id = 0) {
+        $.ajax({
+          url: "fetch_notifications.php",
+          method: "GET",
+          data: { last_id: last_id, user_id: $("#sender_id").val() },
+          success: function (data) {
+            var notifications = JSON.parse(data);
+            notifications.forEach(function (notification) {
+              $("#notifications").prepend(
+                "<p><strong>User " +
+                  notification.sender_id +
+                  ":</strong> " +
+                  notification.message +
+                  " <em>(" +
+                  notification.created_at +
+                  ")</em></p>"
+              );
+              last_id = Math.max(last_id, notification.id);
             });
-        }
+            longPollMessages(last_id);
+          },
+          error: function () {
+            setTimeout(function () {
+              longPollMessages(last_id);
+            }, 5000);
+          },
+        });
+      }
 
-        // Start long polling if WebSocket fails
-        conn.onclose = function() {
-            console.log("WebSocket closed, switching to long polling");
-            longPollNotifications();
-        };
+      conn.onclose = function () {
+        console.log("WebSocket closed, switching to long polling");
+        longPollMessages();
+      };
     </script>
-</body>
+  </body>
 </html>
