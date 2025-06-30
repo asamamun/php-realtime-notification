@@ -39,7 +39,8 @@ This project implements a real-time notification system for a social app using P
    ```bash
    php notification_system.php
    ```
-   This will start the server on `ws://localhost:8080`. Ensure port 8080 is open.
+   This will start the server on `ws://localhost:8080`. Ensure port 8080 is open.  Bettwe use IP instead of localhost for testing in LAN.
+   
 
 ## Usage
 
